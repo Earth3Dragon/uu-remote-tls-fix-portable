@@ -6,6 +6,26 @@
 
 ---
 
+## 下载
+
+**方式一：直接下载 ZIP（最快，不用登录 GitHub）**
+
+https://github.com/Earth3Dragon/uu-remote-tls-fix-portable/archive/refs/heads/main.zip
+
+**方式二：网页按钮**
+
+打开仓库页面 → 点绿色 **Code** 按钮 → **Download ZIP**。
+
+**方式三：命令行**
+
+```bash
+git clone https://github.com/Earth3Dragon/uu-remote-tls-fix-portable.git
+```
+
+下载后解压，双击 **一键修复UU远程.bat** 即可。详细步骤见 [使用说明.md](使用说明.md)。
+
+---
+
 ## 一、先判断：是不是这个问题
 
 连不上 UU 远程有好几种原因，先按三层取证，别急着修：
