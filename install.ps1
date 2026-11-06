@@ -193,13 +193,14 @@ namespace UURemoteTlsFix
                 NetworkChange.NetworkAddressChanged += (s, e) => { _cachedPhysIp = null; };
                 NetworkChange.NetworkAvailabilityChanged += (s, e) => { _cachedPhysIp = null; };
 
-                Log("Starting UUTlsFragmenter Service (0.0.0.0:17899, 0.0.0.0:443, LAN DNS :53)");
+                Log("Starting UUTlsFragmenter Service (127.0.0.1:17899, 127.0.0.1:443, LAN DNS off)");
 
-                Task t1 = StartListenerAsync(IPAddress.Any, MainPort);
-                Task t2 = StartListenerAsync(IPAddress.Any, TransparentTlsPort);
-                Task t3 = StartLanDnsServerAsync();
+                Task t1 = StartListenerAsync(IPAddress.Loopback, MainPort);
+                Task t2 = StartListenerAsync(IPAddress.Loopback, TransparentTlsPort);
+                // LAN DNS 只服务局域网设备，本机修复用不到，默认关闭（少占 53 端口）
+                // Task t3 = StartLanDnsServerAsync();
 
-                Task.WaitAll(t1, t2, t3);
+                Task.WaitAll(t1, t2);
             }
         }
 
