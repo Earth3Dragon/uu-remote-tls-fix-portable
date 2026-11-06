@@ -980,6 +980,59 @@ if ($isAdmin) {
 }
 Write-Ok "已注册开机静默自启 (HKCU\...\Run\UURemoteTLSFragmenter)"
 
+# 自愈看护：每 5 分钟检查分片器是否在监听，掉了就拉起
+$watchdogPath = Join-Path $installDir "watchdog.ps1"
+$watchdogSource = @'
+$ErrorActionPreference = 'SilentlyContinue'
+$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$exe = Join-Path $dir 'UUTlsFragmenter.exe'
+$log = Join-Path $dir 'watchdog.log'
+function Write-WD([string]$m) {
+    Add-Content -LiteralPath $log -Value ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -Encoding UTF8
+}
+if (Test-Path -LiteralPath $log) {
+    if ((Get-Item -LiteralPath $log).Length -gt 512KB) { Remove-Item -LiteralPath $log -Force }
+}
+$alive = $false
+try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $iar = $client.BeginConnect('127.0.0.1', 17899, $null, $null)
+    if ($iar.AsyncWaitHandle.WaitOne(1500)) { $client.EndConnect($iar); $alive = $client.Connected }
+    $client.Close()
+} catch {}
+if (-not $alive) {
+    $proc = Get-Process -Name 'UUTlsFragmenter' -ErrorAction SilentlyContinue
+    if ($proc) {
+        Write-WD 'port 17899 dead but process alive -> kill + restart'
+        $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 800
+    } else {
+        Write-WD 'process missing -> start'
+    }
+    Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Hidden
+    Start-Sleep -Seconds 2
+    $ok = $false
+    try {
+        $c2 = New-Object System.Net.Sockets.TcpClient
+        $c2.Connect('127.0.0.1', 17899)
+        $ok = $c2.Connected
+        $c2.Close()
+    } catch {}
+    Write-WD ('restarted, listening=' + $ok)
+}
+'@
+[System.IO.File]::WriteAllText($watchdogPath, $watchdogSource, $utf8NoBom)
+
+$wdTask = "UUTlsFragmenterWatchdog"
+$wdExe  = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$wdArgs = '"' + $wdExe + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watchdogPath + '"'
+& schtasks.exe /create /tn $wdTask /tr $wdArgs /sc minute /mo 5 /f 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "已安装自愈看护任务（每 5 分钟检查，分片器挂了自动拉起）"
+} else {
+    Write-Warn "自愈看护任务创建失败，可稍后重跑修复脚本重试"
+}
+
 # ----------------------------------------------------------------------
 # 步骤 2/4: 写入 UU 远程原生配置 proxy_config.ini (本机回环 127.0.0.1:17899)
 # ----------------------------------------------------------------------

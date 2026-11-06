@@ -2,7 +2,7 @@
 
 一键解决「UU 远程登录不上 / 设备列表刷不出来 / 连不上远控」，专治校园网或局域网出口防火墙对 `*.nrd.nie.163.com` 做 TLS SNI 阻断。
 
-本包基于 [yunyancuo/uu-remote-tls-fix](https://github.com/yunyancuo/uu-remote-tls-fix)（MIT）改造：换成预编译程序（目标机无需 .NET 编译环境），并自动识别 UU 的非标准安装路径。2026-11-04 在本机实测通过。
+本包基于 [yunyancuo/uu-remote-tls-fix](https://github.com/yunyancuo/uu-remote-tls-fix)（MIT）改造：换成预编译程序（目标机无需 .NET 编译环境），并自动识别 UU 的非标准安装路径。2026-11-04 在本机实测通过；2026-11-06 增补自愈看护（v1.1.0）。
 
 ---
 
@@ -12,7 +12,7 @@
 
 https://github.com/Earth3Dragon/uu-remote-tls-fix-portable/releases/latest
 
-文件名：`uu-remote-tls-fix-portable-v1.0.0.zip`
+文件名：`uu-remote-tls-fix-portable-v1.1.0.zip`
 
 **方式二：源码 ZIP（不用登录 GitHub）**
 
@@ -89,11 +89,16 @@ UU 客户端 -> hosts/代理配置 -> 127.0.0.1:443 / 17899
 |---|---|
 | `%LOCALAPPDATA%\UURemoteTlsFix\` | 分片程序、源码、运行日志 |
 | `HKCU\...\Run\UURemoteTLSFragmenter` | 开机自启（当前用户） |
+| 计划任务 `UUTlsFragmenterWatchdog` | 每 5 分钟检查分片器，挂了自动拉起 |
 | `C:\ProgramData\Netease\GameViewer\proxy_config.ini` | UU 代理配置（指向本机 17899） |
 | `C:\Windows\System32\drivers\etc\hosts` | 6 行 `127.0.0.1 xxx.nrd.nie.163.com # UU_REMOTE_TLS_FIX` |
 | 防火墙 | 入站放行 `TCP 443/17899`、`UDP 53`（仅管理员模式） |
 
-**卸载**：双击 `一键卸载恢复.bat`，会停进程、删自启、重置 `proxy_config.ini`、清掉 hosts 里带 `UU_REMOTE_TLS_FIX` 的行、删安装目录。
+**自愈（v1.1.0 新增）**：安装时注册计划任务 `UUTlsFragmenterWatchdog`，每 5 分钟检查 `127.0.0.1:17899` 是否在监听，不在就重启分片器，日志写到安装目录的 `watchdog.log`。
+
+> 为什么需要它：v1.0.0 只做了开机自启。分片器一旦在运行中静默退出，而 hosts 仍指向 `127.0.0.1`，UU 的所有连接会直接失败，表现为「突然掉线、重连不上」。2026-11-06 本机就遇到一次：分片器在 11-05 20:16 后消失，UU 断了一整天。自愈任务就是兜这个底，最多断 5 分钟。
+
+**卸载**：双击 `一键卸载恢复.bat`，会停进程、删自启、删自愈任务、重置 `proxy_config.ini`、清掉 hosts 里带 `UU_REMOTE_TLS_FIX` 的行、删安装目录。
 
 > 逐步操作、常见问题、验证与更新，见 **[使用说明.md](使用说明.md)**。
 

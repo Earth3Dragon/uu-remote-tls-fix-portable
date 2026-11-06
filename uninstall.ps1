@@ -55,6 +55,7 @@ if (-not $qqHostsActive) {
         $_.Name -match 'python' -and $_.CommandLine -match 'uu_tls_fragmenter'
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Remove-ItemProperty -Path $runKey -Name "UURemoteTLSFragmenter" -ErrorAction SilentlyContinue
+    & schtasks.exe /delete /tn "UUTlsFragmenterWatchdog" /f 2>$null | Out-Null
     Start-Sleep -Milliseconds 300
     if (Test-Path $installDir) {
         Remove-Item -Path $installDir -Recurse -Force -ErrorAction SilentlyContinue
