@@ -980,8 +980,9 @@ if ($isAdmin) {
 }
 Write-Ok "已注册开机静默自启 (HKCU\...\Run\UURemoteTLSFragmenter)"
 
-# 自愈看护：每 5 分钟检查分片器是否在监听，掉了就拉起
-$watchdogPath = Join-Path $installDir "watchdog.ps1"
+# 自愈看护：每 5 分钟读一次系统 TCP 表，端口没了才拉起（不发起连接、不弹窗口）
+$watchdogPath   = Join-Path $installDir "watchdog.ps1"
+$launcherPath   = Join-Path $installDir "WatchdogLauncher.exe"
 $watchdogSource = @'
 $ErrorActionPreference = 'SilentlyContinue'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -991,46 +992,53 @@ function Write-WD([string]$m) {
     Add-Content -LiteralPath $log -Value ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -Encoding UTF8
 }
 if (Test-Path -LiteralPath $log) {
-    if ((Get-Item -LiteralPath $log).Length -gt 512KB) { Remove-Item -LiteralPath $log -Force }
+    if ((Get-Item -LiteralPath $log).Length -gt 256KB) { Remove-Item -LiteralPath $log -Force }
 }
-$alive = $false
-try {
-    $client = New-Object System.Net.Sockets.TcpClient
-    $iar = $client.BeginConnect('127.0.0.1', 17899, $null, $null)
-    if ($iar.AsyncWaitHandle.WaitOne(1500)) { $client.EndConnect($iar); $alive = $client.Connected }
-    $client.Close()
-} catch {}
-if (-not $alive) {
-    $proc = Get-Process -Name 'UUTlsFragmenter' -ErrorAction SilentlyContinue
-    if ($proc) {
-        Write-WD 'port 17899 dead but process alive -> kill + restart'
-        $proc | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 800
-    } else {
-        Write-WD 'process missing -> start'
-    }
-    Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Hidden
-    Start-Sleep -Seconds 2
-    $ok = $false
-    try {
-        $c2 = New-Object System.Net.Sockets.TcpClient
-        $c2.Connect('127.0.0.1', 17899)
-        $ok = $c2.Connected
-        $c2.Close()
-    } catch {}
-    Write-WD ('restarted, listening=' + $ok)
+function Test-Listening {
+    $c = Get-NetTCPConnection -LocalPort 17899 -State Listen -ErrorAction SilentlyContinue
+    return [bool]$c
 }
+$proc = Get-Process -Name 'UUTlsFragmenter' -ErrorAction SilentlyContinue
+if ($proc -and (Test-Listening)) { exit 0 }
+if ($proc) {
+    Start-Sleep -Seconds 3
+    if (Test-Listening) { exit 0 }
+    Write-WD 'port 17899 dead after retry -> restart'
+    $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+} else {
+    Write-WD 'process missing -> start'
+}
+Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Hidden
+Start-Sleep -Seconds 2
+Write-WD ('restarted, listening=' + (Test-Listening))
 '@
 [System.IO.File]::WriteAllText($watchdogPath, $watchdogSource, $utf8NoBom)
 
-$wdTask = "UUTlsFragmenterWatchdog"
-$wdExe  = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-$wdArgs = '"' + $wdExe + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watchdogPath + '"'
-& schtasks.exe /create /tn $wdTask /tr $wdArgs /sc minute /mo 5 /f 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Ok "已安装自愈看护任务（每 5 分钟检查，分片器挂了自动拉起）"
+# 无窗口启动器：优先用包内预编译版本，没有则用 csc 编译
+$bundledLauncher = Join-Path $PSScriptRoot "bin\WatchdogLauncher.exe"
+$launcherCs      = Join-Path $PSScriptRoot "bin\WatchdogLauncher.cs"
+if (Test-Path -LiteralPath $bundledLauncher) {
+    Copy-Item -LiteralPath $bundledLauncher -Destination $launcherPath -Force
+} elseif (Test-Path -LiteralPath $launcherCs) {
+    $csc2 = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+    if (-not (Test-Path $csc2)) { $csc2 = Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe" }
+    & $csc2 /nologo /optimize+ /target:winexe /out:"$launcherPath" "$launcherCs" | Out-Null
+}
+if (Test-Path -LiteralPath $launcherPath) {
+    Write-Ok "已安装无窗口自愈启动器: $launcherPath"
 } else {
-    Write-Warn "自愈看护任务创建失败，可稍后重跑修复脚本重试"
+    Write-Warn "自愈启动器生成失败，自愈任务将跳过"
+}
+
+$wdTask = "UUTlsFragmenterWatchdog"
+if (Test-Path -LiteralPath $launcherPath) {
+    & schtasks.exe /create /tn $wdTask /tr "`"$launcherPath`"" /sc minute /mo 5 /f 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "已安装自愈看护任务（每 5 分钟读 TCP 表，无连接、无窗口）"
+    } else {
+        Write-Warn "自愈看护任务创建失败，可稍后重跑修复脚本重试"
+    }
 }
 
 # ----------------------------------------------------------------------
@@ -1146,7 +1154,9 @@ foreach ($item in $testDomains) {
     $d = $item.Domain
     $role = $item.Role
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $code = & curl.exe -sS -o NUL -w "%{http_code}" --socks5-hostname 127.0.0.1:17899 --max-time 6 "https://$d" 2>&1
+    $raw = & curl.exe -sS -o NUL -w "%{http_code}" --socks5-hostname 127.0.0.1:17899 --max-time 6 "https://$d" 2>&1
+    $code = (@($raw) | Select-Object -Last 1)
+    $code = "$code".Trim()
     $sw.Stop()
     if ($code -match '^\d{3}$' -and $code -ne '000') {
         Write-Ok ("{0,-28} [{1}] -> 独立分片握手成功 ({2,3} ms) [HTTP {3}]" -f $d, $role, $sw.ElapsedMilliseconds, $code)

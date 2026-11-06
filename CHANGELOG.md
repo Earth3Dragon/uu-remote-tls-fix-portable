@@ -1,5 +1,55 @@
 # 更新日志
 
+## v1.1.1 — 2026-11-06
+
+### 修复：自愈任务产生网络抖动 + 每 5 分钟闪一次 CMD 黑框
+
+**现象**
+
+- 装好自愈之后，网络时不时抖一下，UU 偶发掉线
+- 每 5 分钟屏幕上闪一次黑色命令行窗口
+
+**根因**
+
+1. v1.1.0 的检查方式是「TCP 连一下 `127.0.0.1:17899`」，每次检查都建立并断开一次连接；超时只有 1.5 秒，系统繁忙时会误判成「端口死了」，直接杀掉分片器重启 —— 这一下所有连接全断，就是能感觉到的抖动。
+2. 计划任务直接调用 `powershell.exe`（控制台程序），即使加了 `-WindowStyle Hidden`，任务启动时仍会闪一下窗口。
+
+**修复**
+
+- 检查改为读取系统 TCP 表（`Get-NetTCPConnection`），**不建立任何连接**，零网络交互
+- 端口异常时先等 3 秒二次确认，仍异常才重启，避免瞬时抖动误杀
+- 新增 `WatchdogLauncher.exe`（winexe 编译），任务调用它，内部以 `CreateNoWindow` 启动 PowerShell，全程无窗口
+- 健康时脚本静默退出，不写日志、不做多余动作
+
+**实测**
+
+- 正常状态运行任务：`watchdog.log` 大小不变、`conhost` 进程数不变（无窗口）
+- 手动杀掉分片器再运行任务：3 秒内拉起，同样无窗口
+- 任务动作已确认为 `WatchdogLauncher.exe`，Last Result = 0
+
+### 升级方式
+
+下载新包解压，双击 `一键修复UU远程.bat` 覆盖安装。它会重写 watchdog、重新注册任务、把任务动作指向无窗口启动器。
+
+验证：
+
+```powershell
+schtasks /query /tn UUTlsFragmenterWatchdog /v /fo LIST | findstr "Task To Run"
+```
+
+应该显示 `...\WatchdogLauncher.exe`，而不是 `powershell.exe`。
+
+### 文件变化
+
+| 文件 | 变化 |
+|---|---|
+| `install.ps1` | 自愈段重写（TCP 表检查 + 启动器） |
+| `bin/WatchdogLauncher.exe` | 新增，预编译无窗口启动器 |
+| `bin/WatchdogLauncher.cs` | 新增，源码 |
+| `README.md` / `使用说明.md` | 更新自愈描述 |
+
+---
+
 ## v1.1.0 — 2026-11-06
 
 ### 修复：分片器静默退出导致 UU 远程整段掉线
